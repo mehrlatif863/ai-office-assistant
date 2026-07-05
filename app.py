@@ -1,6 +1,7 @@
 import streamlit as st
 import re
 import io
+import csv 
 from groq import Groq
 from pypdf import PdfReader
 from docx import Document as DocxDocument # Changed to avoid conflict
@@ -86,7 +87,18 @@ def read_pptx(file):
                     for cell in row.cells: text += cell.text + " | "
                     text += "\n"
     return text
-
+     def read_csv(file):
+    text = ""
+    # Handle different text encodings
+    try:
+        decoded_file = io.StringIO(file.read().decode('utf-8'))
+    except UnicodeDecodeError:
+        decoded_file = io.StringIO(file.read().decode('latin-1'))
+        
+    reader = csv.reader(decoded_file)
+    for row in reader:
+        text += " | ".join(row) + "\n"
+    return text
 # ==========================================
 # 4. RAG LOGIC
 # ==========================================
@@ -132,7 +144,7 @@ with st.sidebar:
 # ==========================================
 # 6. MAIN APP LOGIC
 # ==========================================
-uploaded_file = st.file_uploader("Upload Document", type=["pdf", "docx", "xlsx", "pptx"])
+uploaded_file = st.file_uploader("Upload Document", type=["pdf", "docx", "xlsx", "pptx","csv"])
 
 if uploaded_file is not None:
     file_type = uploaded_file.name.split(".")[-1].lower()
@@ -142,8 +154,9 @@ if uploaded_file is not None:
         elif file_type == "docx": doc_text = read_word(uploaded_file)
         elif file_type == "xlsx": doc_text = read_excel(uploaded_file)
         elif file_type == "pptx": doc_text = read_pptx(uploaded_file)
+        elif file_type == "csv": doc_text = read_csv(uploaded_file) 
         else: doc_text = ""
-        document_chunks = chunk_text(doc_text)
+               document_chunks = chunk_text(doc_text)
 
     st.success(f"✅ {uploaded_file.name} ready! ({len(document_chunks)} segments)")
 
