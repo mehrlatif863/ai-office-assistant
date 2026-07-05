@@ -34,7 +34,7 @@ if not st.session_state.authenticated:
 # 2. SETUP GROQ AI (Llama 3)
 # ==========================================
 # PASTE YOUR GROQ KEY HERE
-client = Groq(api_key="client = Groq(api_key=st.secrets["GROQ_API_KEY"])")
+client = client = Groq(api_key=st.secrets["GROQ_API_KEY"])
 
 st.title("🤖 AI Office Assistant (Groq Powered)")
 st.write("Lightning fast. No limits.")
