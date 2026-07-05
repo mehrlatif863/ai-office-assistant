@@ -154,8 +154,7 @@ if uploaded_file is not None:
         elif file_type == "xlsx": doc_text = read_excel(uploaded_file)
         elif file_type == "pptx": doc_text = read_pptx(uploaded_file)
         elif file_type == "csv": doc_text = read_csv(uploaded_file) 
-        else: doc_text = ""
-            document_chunks = chunk_text(doc_text)
+        else: doc_text =""document_chunks = chunk_text(doc_text)
         st.success(f"✅ {uploaded_file.name} ready! ({len(document_chunks)} segments)")
 
     # Display past messages
