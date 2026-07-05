@@ -1,8 +1,9 @@
 import streamlit as st
 import re
+import io
 from groq import Groq
 from pypdf import PdfReader
-from docx import Document
+from docx import Document as DocxDocument # Changed to avoid conflict
 import openpyxl
 from pptx import Presentation
 
@@ -31,16 +32,23 @@ if not st.session_state.authenticated:
     st.stop()
 
 # ==========================================
-# 2. SETUP GROQ AI (Llama 3)
+# 2. SETUP AI & SESSION STATE
 # ==========================================
-# PASTE YOUR GROQ KEY HERE
-client = client = Groq(api_key=st.secrets["GROQ_API_KEY"])
+client = Groq(api_key=st.secrets["GROQ_API_KEY"])
 
-st.title("🤖 AI Office Assistant (Groq Powered)")
-st.write("Lightning fast. No limits.")
+# Keep track of chat history and current answer for export
+if "messages" not in st.session_state:
+    st.session_state.messages = []
+if "last_answer" not in st.session_state:
+    st.session_state.last_answer = ""
+if "last_question" not in st.session_state:
+    st.session_state.last_question = ""
+
+st.title("🤖 AI Office Assistant (Pro)")
+st.write("Chat with your documents. Export answers to Word.")
 
 # ==========================================
-# 3. FILE READERS
+# 3. FILE READERS (Updated Word Reader)
 # ==========================================
 def read_pdf(file):
     text = ""
@@ -49,7 +57,7 @@ def read_pdf(file):
 
 def read_word(file):
     text = ""
-    doc = Document(file)
+    doc = DocxDocument(file) # Updated name
     for para in doc.paragraphs: text += para.text + "\n"
     for table in doc.tables:
         for row in table.rows:
@@ -80,11 +88,10 @@ def read_pptx(file):
     return text
 
 # ==========================================
-# 4. KEYWORD SEARCH RAG
+# 4. RAG LOGIC
 # ==========================================
 def chunk_text(text, size=4000, overlap=400):
-    chunks = []
-    start = 0
+    chunks, start = [], 0
     while start < len(text):
         chunks.append(text[start:start + size])
         start += size - overlap
@@ -92,21 +99,38 @@ def chunk_text(text, size=4000, overlap=400):
 
 def find_best_chunks(chunks, question, top_k=3):
     words = set(re.findall(r'\b\w+\b', question.lower()))
-    boring_words = {"what", "is", "the", "a", "an", "in", "on", "to", "for", "of", "with", "how", "does", "do", "did", "are", "was", "were", "be", "this", "that", "it", "from", "by", "and", "or", "but", "if"}
-    keywords = words - boring_words
+    boring = {"what","is","the","a","an","in","on","to","for","of","with","how","does","do","did","are","was","were","be","this","that","it","from","by","and","or","but","if"}
+    keywords = words - boring
     if not keywords: return "\n\n".join(chunks[:top_k])
-        
-    scores = []
-    for chunk in chunks:
-        chunk_lower = chunk.lower()
-        score = sum(1 for word in keywords if word in chunk_lower)
-        scores.append((score, chunk))
-        
+    scores = [(sum(1 for w in keywords if w in c.lower()), c) for c in chunks]
     scores.sort(key=lambda x: x[0], reverse=True)
-    return "\n\n".join([chunk for score, chunk in scores[:top_k]])
+    return "\n\n".join([c for s, c in scores[:top_k]])
 
 # ==========================================
-# 5. MAIN APP LOGIC
+# 5. LAYOUT: CHAT HISTORY SIDEBAR
+# ==========================================
+with st.sidebar:
+    st.markdown("### 💬 Chat History")
+    if len(st.session_state.messages) == 0:
+        st.info("No messages yet.")
+    else:
+        for msg in st.session_state.messages:
+            if msg["role"] == "user":
+                st.markdown(f"**👤 You:** {msg['content'][:50]}...")
+            else:
+                st.markdown(f"**🤖 AI:** {msg['content'][:50]}...")
+    
+    st.markdown("---")
+    if st.button("🗑️ Clear Chat History"):
+        st.session_state.messages = []
+        st.rerun()
+        
+    if st.button("🔒 Logout"):
+        st.session_state.authenticated = False
+        st.rerun()
+
+# ==========================================
+# 6. MAIN APP LOGIC
 # ==========================================
 uploaded_file = st.file_uploader("Upload Document", type=["pdf", "docx", "xlsx", "pptx"])
 
@@ -119,26 +143,65 @@ if uploaded_file is not None:
         elif file_type == "xlsx": doc_text = read_excel(uploaded_file)
         elif file_type == "pptx": doc_text = read_pptx(uploaded_file)
         else: doc_text = ""
-        
         document_chunks = chunk_text(doc_text)
 
-    st.success(f"✅ {uploaded_file.name} ready! ({len(document_chunks)} segments created)")
+    st.success(f"✅ {uploaded_file.name} ready! ({len(document_chunks)} segments)")
+
+    # Display past messages
+    for msg in st.session_state.messages:
+        with st.chat_message(msg["role"]):
+            st.markdown(msg["content"])
 
     question = st.chat_input("Ask about your file...")
     
     if question:
-        with st.spinner("Searching & thinking..."):
-            best_context = find_best_chunks(document_chunks, question)
+        # 1. Save to history & display user question
+        st.session_state.messages.append({"role": "user", "content": question})
+        with st.chat_message("user"):
+            st.markdown(question)
             
-            prompt = f"Answer based ONLY on this context:\n{best_context}\n\nQuestion: {question}"
-            
-            # GROQ API CALL
-            response = client.chat.completions.create(
-                model="llama-3.3-70b-versatile", 
-                messages=[{"role": "user", "content": prompt}]
-            )
-            st.write(response.choices[0].message.content)
+        # 2. Get AI answer
+        with st.chat_message("assistant"):
+            with st.spinner("Searching & thinking..."):
+                best_context = find_best_chunks(document_chunks, question)
+                prompt = f"Answer based ONLY on this context:\n{best_context}\n\nQuestion: {question}"
+                response = client.chat.completions.create(
+                    model="llama-3.3-70b-versatile", 
+                    messages=[{"role": "user", "content": prompt}]
+                )
+                answer = response.choices[0].message.content
+                st.markdown(answer)
+                
+        # 3. Save to history & session state for export
+        st.session_state.messages.append({"role": "assistant", "content": answer})
+        st.session_state.last_question = question
+        st.session_state.last_answer = answer
 
-    if st.button("🔒 Logout"):
-        st.session_state.authenticated = False
-        st.rerun()
+    # ==========================================
+    # 7. EXPORT TO WORD FEATURE
+    # ==========================================
+    if st.session_state.last_answer:
+        st.markdown("---")
+        col1, col2, col3 = st.columns([1,1,1])
+        with col2:
+            if st.button("📥 Download Last Answer as Word Document", use_container_width=True):
+                # Create Word Document in memory
+                doc = DocxDocument()
+                doc.add_heading('AI Office Assistant - Export', 0)
+                doc.add_heading('Your Question:', level=1)
+                doc.add_paragraph(st.session_state.last_question)
+                doc.add_heading('AI Answer:', level=1)
+                doc.add_paragraph(st.session_state.last_answer)
+                
+                # Save to memory buffer
+                buffer = io.BytesIO()
+                doc.save(buffer)
+                buffer.seek(0)
+                
+                # Trigger download
+                st.download_button(
+                    label="Click here to save the .docx file",
+                    data=buffer,
+                    file_name="AI_Assistant_Answer.docx",
+                    mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+                )
