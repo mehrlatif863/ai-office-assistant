@@ -47,14 +47,16 @@ st.title("🤖 AI Office Assistant (Data Analyst Edition)")
 # ==========================================
 # 3. CREATE TABS
 # ==========================================
-tab1, tab2 = st.tabs(["💬 Chat with AI", "📊 Auto Dashboard"])
+tab1, tab2 = st.tabs(["💬 Chat with AI (Multiple Files)", "📊 Auto Dashboard"])
 
 # ==========================================
-# TAB 1: AI CHATBOT
+# TAB 1: AI CHATBOT (MULTI-FILE SUPPORT)
 # ==========================================
 with tab1:
-    uploaded_file = st.file_uploader("Upload Document for Chat", type=["pdf", "docx", "xlsx", "pptx", "csv"], key="chat")
+    # MAGIC TRICK: accept_multiple_files=True
+    uploaded_files = st.file_uploader("Upload Documents (You can select multiple!)", type=["pdf", "docx", "xlsx", "pptx", "csv"], accept_multiple_files=True, key="chat")
     
+    # --- READERS ---
     def read_pdf(file):
         return "\n".join([page.extract_text() for page in PdfReader(file).pages])
     def read_word(file):
@@ -81,6 +83,7 @@ with tab1:
             for row in wb[sn].iter_rows(values_only=True): text += " | ".join([str(c) if c else "" for c in row]) + "\n"
         return text
 
+    # --- RAG LOGIC ---
     def chunk_text(text, size=4000, overlap=400):
         chunks, start = [], 0
         while start < len(text): chunks.append(text[start:start+size]); start += size - overlap
@@ -91,27 +94,35 @@ with tab1:
         scores = sorted([(sum(1 for w in words if w in c.lower()), c) for c in chunks], key=lambda x: x[0], reverse=True)
         return "\n".join([c for s, c in scores[:3]])
 
-    if uploaded_file:
-        ft = uploaded_file.name.split(".")[-1].lower()
-        with st.spinner("Indexing..."):
-            if ft=="pdf": txt = read_pdf(uploaded_file)
-            elif ft=="docx": txt = read_word(uploaded_file)
-            elif ft=="pptx": txt = read_pptx(uploaded_file)
-            elif ft=="csv": txt = read_csv_txt(uploaded_file)
-            elif ft=="xlsx": txt = read_excel_txt(uploaded_file)
-            else: txt = ""
-            chunks = chunk_text(txt)
-        st.success(f"✅ {uploaded_file.name} ready!")
+    # --- MAIN PROCESSING ---
+    if uploaded_files:
+        all_text = ""
+        file_names = []
+        
+        with st.spinner(f"Reading {len(uploaded_files)} files..."):
+            for file in uploaded_files:
+                ft = file.name.split(".")[-1].lower()
+                file_names.append(file.name)
+                
+                if ft=="pdf": all_text += read_pdf(file) + "\n\n"
+                elif ft=="docx": all_text += read_word(file) + "\n\n"
+                elif ft=="pptx": all_text += read_pptx(file) + "\n\n"
+                elif ft=="csv": all_text += read_csv_txt(file) + "\n\n"
+                elif ft=="xlsx": all_text += read_excel_txt(file) + "\n\n"
+                
+            chunks = chunk_text(all_text)
+            
+        st.success(f"✅ {len(uploaded_files)} files combined and indexed! ({len(chunks)} memory segments)")
 
         for msg in st.session_state.messages:
             with st.chat_message(msg["role"]): st.markdown(msg["content"])
 
-        q = st.chat_input("Ask about your file...")
+        q = st.chat_input("Ask a question across ALL uploaded files...")
         if q:
             st.session_state.messages.append({"role": "user", "content": q})
             with st.chat_message("user"): st.markdown(q)
             with st.chat_message("assistant"):
-                with st.spinner("Thinking..."):
+                with st.spinner("Searching all documents..."):
                     ctx = find_best_chunks(chunks, q)
                     res = client.chat.completions.create(model="llama-3.3-70b-versatile", messages=[{"role":"user","content":f"Answer ONLY from context:\n{ctx}\n\nQ:{q}"}])
                     ans = res.choices[0].message.content
@@ -127,14 +138,13 @@ with tab1:
                 st.download_button("Save File", buf, "Answer.docx")
 
 # ==========================================
-# TAB 2: AUTO DASHBOARD
+# TAB 2: AUTO DASHBOARD (UNCHANGED)
 # ==========================================
 with tab2:
     st.write("Upload an **Excel** or **CSV** file to instantly generate interactive charts.")
     dash_file = st.file_uploader("Upload Data File", type=["xlsx", "csv"], key="dash")
     
     if dash_file:
-        # Read data properly using Pandas
         if dash_file.name.endswith(".csv"):
             df = pd.read_csv(dash_file)
         else:
@@ -142,11 +152,9 @@ with tab2:
             
         st.success("✅ Data loaded successfully!")
         
-        # Show first few rows
         with st.expander("View Raw Data"):
             st.dataframe(df.head(10))
 
-        # Chart Creator UI
         cols = df.columns.tolist()
         if len(cols) >= 2:
             c1, c2 = st.columns(2)
@@ -157,7 +165,6 @@ with tab2:
             
             chart_type = st.radio("Select Chart Type", ["Bar Chart", "Line Chart", "Area Chart"], horizontal=True)
             
-            # Draw Chart
             if st.button("📊 Generate Chart", use_container_width=True):
                 try:
                     if chart_type == "Bar Chart":
@@ -167,7 +174,7 @@ with tab2:
                     elif chart_type == "Area Chart":
                         st.area_chart(df, x=x_axis, y=y_axis)
                 except Exception as e:
-                    st.error(f"Could not draw chart. Make sure Y-Axis has numbers, not text. (Error: {e})")
+                    st.error(f"Could not draw chart. Make sure Y-Axis has numbers. (Error: {e})")
         else:
             st.warning("Need at least 2 columns to make a chart.")
 
