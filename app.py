@@ -149,12 +149,20 @@ if uploaded_file is not None:
     file_type = uploaded_file.name.split(".")[-1].lower()
     
     with st.spinner("Reading & Indexing..."):
-        if file_type == "pdf": doc_text = read_pdf(uploaded_file)
-        elif file_type == "docx": doc_text = read_word(uploaded_file)
-        elif file_type == "xlsx": doc_text = read_excel(uploaded_file)
-        elif file_type == "pptx": doc_text = read_pptx(uploaded_file)
-        elif file_type == "csv": doc_text = read_csv(uploaded_file) 
-            else: doc_text =""document_chunks = chunk_text(doc_text)
+        if file_type == "pdf": 
+            doc_text = read_pdf(uploaded_file)
+        elif file_type == "docx": 
+            doc_text = read_word(uploaded_file)
+        elif file_type == "xlsx": 
+            doc_text = read_excel(uploaded_file)
+        elif file_type == "pptx": 
+            doc_text = read_pptx(uploaded_file)
+        elif file_type == "csv": 
+            doc_text = read_csv(uploaded_file) 
+        else: 
+            doc_text = ""
+            
+        document_chunks = chunk_text(doc_text)
         st.success(f"✅ {uploaded_file.name} ready! ({len(document_chunks)} segments)")
 
     # Display past messages
