@@ -2,6 +2,7 @@ import streamlit as st
 import re
 import io
 import csv
+import pandas as pd # <-- NEW: The data engine!
 from groq import Groq
 from pypdf import PdfReader
 from docx import Document as DocxDocument
@@ -44,8 +45,8 @@ if "last_answer" not in st.session_state:
 if "last_question" not in st.session_state:
     st.session_state.last_question = ""
 
-st.title("🤖 AI Office Assistant (Pro)")
-st.write("Work with your documents. Export answers to Word.")
+st.title("🤖 AI Office Assistant (Data Analyst Edition)")
+st.write("Chat with documents OR visualize your Excel/CSV data instantly.")
 
 # ==========================================
 # 3. FILE READERS
@@ -65,16 +66,6 @@ def read_word(file):
             text += "\n"
     return text
 
-def read_excel(file):
-    text = ""
-    wb = openpyxl.load_workbook(file)
-    for sheet_name in wb.sheetnames:
-        sheet = wb[sheet_name]
-        text += f"--- Sheet: {sheet_name} ---\n"
-        for row in sheet.iter_rows(values_only=True):
-            text += " | ".join([str(cell) if cell else "" for cell in row]) + "\n"
-    return text
-
 def read_pptx(file):
     text = ""
     for slide_num, slide in enumerate(Presentation(file).slides, 1):
@@ -87,19 +78,8 @@ def read_pptx(file):
                     text += "\n"
     return text
 
-def read_csv(file):
-    text = ""
-    try:
-        decoded_file = io.StringIO(file.read().decode('utf-8'))
-    except UnicodeDecodeError:
-        decoded_file = io.StringIO(file.read().decode('latin-1'))
-    reader = csv.reader(decoded_file)
-    for row in reader:
-        text += " | ".join(row) + "\n"
-    return text
-
 # ==========================================
-# 4. RAG LOGIC
+# 4. RAG LOGIC (For Chat Tab)
 # ==========================================
 def chunk_text(text, size=4000, overlap=400):
     chunks, start = [], 0
@@ -118,7 +98,7 @@ def find_best_chunks(chunks, question, top_k=3):
     return "\n\n".join([c for s, c in scores[:top_k]])
 
 # ==========================================
-# 5. LAYOUT: CHAT HISTORY SIDEBAR
+# 5. LAYOUT: SIDEBAR
 # ==========================================
 with st.sidebar:
     st.markdown("### 💬 Chat History")
@@ -127,86 +107,4 @@ with st.sidebar:
     else:
         for msg in st.session_state.messages:
             if msg["role"] == "user":
-                st.markdown(f"**👤 You:** {msg['content'][:50]}...")
-            else:
-                st.markdown(f"**🤖 AI:** {msg['content'][:50]}...")
-    
-    st.markdown("---")
-    if st.button("🗑️ Clear Chat History"):
-        st.session_state.messages = []
-        st.rerun()
-        
-    if st.button("🔒 Logout"):
-        st.session_state.authenticated = False
-        st.rerun()
-
-# ==========================================
-# 6. MAIN APP LOGIC
-# ==========================================
-uploaded_file = st.file_uploader("Upload Document", type=["pdf", "docx", "xlsx", "pptx", "csv"])
-
-if uploaded_file is not None:
-    file_type = uploaded_file.name.split(".")[-1].lower()
-    
-    with st.spinner("Reading & Indexing..."):
-        if file_type == "pdf": doc_text = read_pdf(uploaded_file)
-        elif file_type == "docx": doc_text = read_word(uploaded_file)
-        elif file_type == "xlsx": doc_text = read_excel(uploaded_file)
-        elif file_type == "pptx": doc_text = read_pptx(uploaded_file)
-        elif file_type == "csv": doc_text = read_csv(uploaded_file)
-        else: doc_text = ""
-        document_chunks = chunk_text(doc_text)
-
-    st.success(f"✅ {uploaded_file.name} ready! ({len(document_chunks)} segments)")
-
-    for msg in st.session_state.messages:
-        with st.chat_message(msg["role"]):
-            st.markdown(msg["content"])
-
-    question = st.chat_input("Ask about your file...")
-    
-    if question:
-        st.session_state.messages.append({"role": "user", "content": question})
-        with st.chat_message("user"):
-            st.markdown(question)
-            
-        with st.chat_message("assistant"):
-            with st.spinner("Searching & thinking..."):
-                best_context = find_best_chunks(document_chunks, question)
-                prompt = f"Answer based ONLY on this context:\n{best_context}\n\nQuestion: {question}"
-                response = client.chat.completions.create(
-                    model="llama-3.3-70b-versatile", 
-                    messages=[{"role": "user", "content": prompt}]
-                )
-                answer = response.choices[0].message.content
-                st.markdown(answer)
-                
-        st.session_state.messages.append({"role": "assistant", "content": answer})
-        st.session_state.last_question = question
-        st.session_state.last_answer = answer
-
-    # ==========================================
-    # 7. EXPORT TO WORD FEATURE
-    # ==========================================
-    if st.session_state.last_answer:
-        st.markdown("---")
-        col1, col2, col3 = st.columns([1,1,1])
-        with col2:
-            if st.button("📥 Download Last Answer as Word Document", use_container_width=True):
-                doc = DocxDocument()
-                doc.add_heading('AI Office Assistant - Export', 0)
-                doc.add_heading('Your Question:', level=1)
-                doc.add_paragraph(st.session_state.last_question)
-                doc.add_heading('AI Answer:', level=1)
-                doc.add_paragraph(st.session_state.last_answer)
-                
-                buffer = io.BytesIO()
-                doc.save(buffer)
-                buffer.seek(0)
-                
-                st.download_button(
-                    label="Click here to save the .docx file",
-                    data=buffer,
-                    file_name="AI_Assistant_Answer.docx",
-                    mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-                )
+                st.markdown(f"**👤
