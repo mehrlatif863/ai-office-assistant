@@ -2,7 +2,7 @@ import streamlit as st
 import re
 import io
 import csv
-import pandas as pd # <-- NEW: The data engine!
+import pandas as pd
 from groq import Groq
 from pypdf import PdfReader
 from docx import Document as DocxDocument
@@ -37,74 +37,143 @@ if not st.session_state.authenticated:
 # 2. SETUP AI & SESSION STATE
 # ==========================================
 client = Groq(api_key=st.secrets["GROQ_API_KEY"])
-
 if "messages" not in st.session_state:
     st.session_state.messages = []
 if "last_answer" not in st.session_state:
     st.session_state.last_answer = ""
-if "last_question" not in st.session_state:
-    st.session_state.last_question = ""
 
 st.title("🤖 AI Office Assistant (Data Analyst Edition)")
-st.write("Chat with documents OR visualize your Excel/CSV data instantly.")
 
 # ==========================================
-# 3. FILE READERS
+# 3. CREATE TABS
 # ==========================================
-def read_pdf(file):
-    text = ""
-    for page in PdfReader(file).pages: text += page.extract_text() + "\n"
-    return text
-
-def read_word(file):
-    text = ""
-    doc = DocxDocument(file)
-    for para in doc.paragraphs: text += para.text + "\n"
-    for table in doc.tables:
-        for row in table.rows:
-            for cell in row.cells: text += cell.text + " | "
-            text += "\n"
-    return text
-
-def read_pptx(file):
-    text = ""
-    for slide_num, slide in enumerate(Presentation(file).slides, 1):
-        text += f"--- Slide {slide_num} ---\n"
-        for shape in slide.shapes:
-            if shape.has_text_frame: text += shape.text_frame.text + "\n"
-            if shape.has_table:
-                for row in shape.table.rows:
-                    for cell in row.cells: text += cell.text + " | "
-                    text += "\n"
-    return text
+tab1, tab2 = st.tabs(["💬 Chat with AI", "📊 Auto Dashboard"])
 
 # ==========================================
-# 4. RAG LOGIC (For Chat Tab)
+# TAB 1: AI CHATBOT
 # ==========================================
-def chunk_text(text, size=4000, overlap=400):
-    chunks, start = [], 0
-    while start < len(text):
-        chunks.append(text[start:start + size])
-        start += size - overlap
-    return chunks
+with tab1:
+    uploaded_file = st.file_uploader("Upload Document for Chat", type=["pdf", "docx", "xlsx", "pptx", "csv"], key="chat")
+    
+    def read_pdf(file):
+        return "\n".join([page.extract_text() for page in PdfReader(file).pages])
+    def read_word(file):
+        doc = DocxDocument(file)
+        text = "\n".join([p.text for p in doc.paragraphs])
+        for t in doc.tables:
+            for r in t.rows: text += "\n" + " | ".join([c.text for c in r.cells])
+        return text
+    def read_pptx(file):
+        text = ""
+        for s in Presentation(file).slides:
+            for sh in s.shapes:
+                if sh.has_text_frame: text += sh.text_frame.text + "\n"
+        return text
+    def read_csv_txt(file):
+        try: f = io.StringIO(file.read().decode('utf-8'))
+        except: f = io.StringIO(file.read().decode('latin-1'))
+        return "\n".join([",".join(row) for row in csv.reader(f)])
+    def read_excel_txt(file):
+        wb = openpyxl.load_workbook(file)
+        text = ""
+        for sn in wb.sheetnames:
+            text += f"--- {sn} ---\n"
+            for row in wb[sn].iter_rows(values_only=True): text += " | ".join([str(c) if c else "" for c in row]) + "\n"
+        return text
 
-def find_best_chunks(chunks, question, top_k=3):
-    words = set(re.findall(r'\b\w+\b', question.lower()))
-    boring = {"what","is","the","a","an","in","on","to","for","of","with","how","does","do","did","are","was","were","be","this","that","it","from","by","and","or","but","if"}
-    keywords = words - boring
-    if not keywords: return "\n\n".join(chunks[:top_k])
-    scores = [(sum(1 for w in keywords if w in c.lower()), c) for c in chunks]
-    scores.sort(key=lambda x: x[0], reverse=True)
-    return "\n\n".join([c for s, c in scores[:top_k]])
+    def chunk_text(text, size=4000, overlap=400):
+        chunks, start = [], 0
+        while start < len(text): chunks.append(text[start:start+size]); start += size - overlap
+        return chunks
+    def find_best_chunks(chunks, q):
+        words = set(re.findall(r'\b\w+\b', q.lower())) - {"what","is","the","a","an","in","on","to","for","of","with","how","does","do","did","are","was","were","be","this","that","it","from","by","and","or","but","if"}
+        if not words: return "\n".join(chunks[:3])
+        scores = sorted([(sum(1 for w in words if w in c.lower()), c) for c in chunks], key=lambda x: x[0], reverse=True)
+        return "\n".join([c for s, c in scores[:3]])
+
+    if uploaded_file:
+        ft = uploaded_file.name.split(".")[-1].lower()
+        with st.spinner("Indexing..."):
+            if ft=="pdf": txt = read_pdf(uploaded_file)
+            elif ft=="docx": txt = read_word(uploaded_file)
+            elif ft=="pptx": txt = read_pptx(uploaded_file)
+            elif ft=="csv": txt = read_csv_txt(uploaded_file)
+            elif ft=="xlsx": txt = read_excel_txt(uploaded_file)
+            else: txt = ""
+            chunks = chunk_text(txt)
+        st.success(f"✅ {uploaded_file.name} ready!")
+
+        for msg in st.session_state.messages:
+            with st.chat_message(msg["role"]): st.markdown(msg["content"])
+
+        q = st.chat_input("Ask about your file...")
+        if q:
+            st.session_state.messages.append({"role": "user", "content": q})
+            with st.chat_message("user"): st.markdown(q)
+            with st.chat_message("assistant"):
+                with st.spinner("Thinking..."):
+                    ctx = find_best_chunks(chunks, q)
+                    res = client.chat.completions.create(model="llama-3.3-70b-versatile", messages=[{"role":"user","content":f"Answer ONLY from context:\n{ctx}\n\nQ:{q}"}])
+                    ans = res.choices[0].message.content
+                    st.markdown(ans)
+            st.session_state.messages.append({"role": "assistant", "content": ans})
+            st.session_state.last_answer = ans
+
+        if st.session_state.last_answer:
+            if st.button("📥 Download Answer as Word"):
+                doc = DocxDocument()
+                doc.add_paragraph(st.session_state.last_answer)
+                buf = io.BytesIO(); doc.save(buf); buf.seek(0)
+                st.download_button("Save File", buf, "Answer.docx")
 
 # ==========================================
-# 5. LAYOUT: SIDEBAR
+# TAB 2: AUTO DASHBOARD
+# ==========================================
+with tab2:
+    st.write("Upload an **Excel** or **CSV** file to instantly generate interactive charts.")
+    dash_file = st.file_uploader("Upload Data File", type=["xlsx", "csv"], key="dash")
+    
+    if dash_file:
+        # Read data properly using Pandas
+        if dash_file.name.endswith(".csv"):
+            df = pd.read_csv(dash_file)
+        else:
+            df = pd.read_excel(dash_file)
+            
+        st.success("✅ Data loaded successfully!")
+        
+        # Show first few rows
+        with st.expander("View Raw Data"):
+            st.dataframe(df.head(10))
+
+        # Chart Creator UI
+        cols = df.columns.tolist()
+        if len(cols) >= 2:
+            c1, c2 = st.columns(2)
+            with c1:
+                x_axis = st.selectbox("X-Axis (Categories)", cols)
+            with c2:
+                y_axis = st.selectbox("Y-Axis (Numbers)", cols, index=1)
+            
+            chart_type = st.radio("Select Chart Type", ["Bar Chart", "Line Chart", "Area Chart"], horizontal=True)
+            
+            # Draw Chart
+            if st.button("📊 Generate Chart", use_container_width=True):
+                try:
+                    if chart_type == "Bar Chart":
+                        st.bar_chart(df, x=x_axis, y=y_axis)
+                    elif chart_type == "Line Chart":
+                        st.line_chart(df, x=x_axis, y=y_axis)
+                    elif chart_type == "Area Chart":
+                        st.area_chart(df, x=x_axis, y=y_axis)
+                except Exception as e:
+                    st.error(f"Could not draw chart. Make sure Y-Axis has numbers, not text. (Error: {e})")
+        else:
+            st.warning("Need at least 2 columns to make a chart.")
+
+# ==========================================
+# SIDEBAR
 # ==========================================
 with st.sidebar:
-    st.markdown("### 💬 Chat History")
-    if len(st.session_state.messages) == 0:
-        st.info("No messages yet.")
-    else:
-        for msg in st.session_state.messages:
-            if msg["role"] == "user":
-                st.markdown(f"**👤
+    if st.button("🗑️ Clear Chat History"): st.session_state.messages = []; st.rerun()
+    if st.button("🔒 Logout"): st.session_state.authenticated = False; st.rerun()
