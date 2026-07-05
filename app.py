@@ -4,7 +4,7 @@ import io
 import csv
 from groq import Groq
 from pypdf import PdfReader
-from docx import Document as DocxDocument # Changed to avoid conflict
+from docx import Document as DocxDocument
 import openpyxl
 from pptx import Presentation
 
@@ -37,7 +37,6 @@ if not st.session_state.authenticated:
 # ==========================================
 client = Groq(api_key=st.secrets["GROQ_API_KEY"])
 
-# Keep track of chat history and current answer for export
 if "messages" not in st.session_state:
     st.session_state.messages = []
 if "last_answer" not in st.session_state:
@@ -46,10 +45,10 @@ if "last_question" not in st.session_state:
     st.session_state.last_question = ""
 
 st.title("🤖 AI Office Assistant (Pro)")
-st.write("Chat with your documents. Export answers to Word.")
+st.write("Work with your documents. Export answers to Word.")
 
 # ==========================================
-# 3. FILE READERS (Updated Word Reader)
+# 3. FILE READERS
 # ==========================================
 def read_pdf(file):
     text = ""
@@ -58,7 +57,7 @@ def read_pdf(file):
 
 def read_word(file):
     text = ""
-    doc = DocxDocument(file) # Updated name
+    doc = DocxDocument(file)
     for para in doc.paragraphs: text += para.text + "\n"
     for table in doc.tables:
         for row in table.rows:
@@ -87,17 +86,18 @@ def read_pptx(file):
                     for cell in row.cells: text += cell.text + " | "
                     text += "\n"
     return text
-    def read_csv(file):
-        text =""
-    # Handle different text encodings
+
+def read_csv(file):
+    text = ""
     try:
         decoded_file = io.StringIO(file.read().decode('utf-8'))
     except UnicodeDecodeError:
         decoded_file = io.StringIO(file.read().decode('latin-1'))
-        reader = csv.reader(decoded_file)
+    reader = csv.reader(decoded_file)
     for row in reader:
         text += " | ".join(row) + "\n"
     return text
+
 # ==========================================
 # 4. RAG LOGIC
 # ==========================================
@@ -143,29 +143,22 @@ with st.sidebar:
 # ==========================================
 # 6. MAIN APP LOGIC
 # ==========================================
-uploaded_file = st.file_uploader("Upload Document", type=["pdf", "docx", "xlsx", "pptx","csv"])
+uploaded_file = st.file_uploader("Upload Document", type=["pdf", "docx", "xlsx", "pptx", "csv"])
 
 if uploaded_file is not None:
     file_type = uploaded_file.name.split(".")[-1].lower()
     
     with st.spinner("Reading & Indexing..."):
-        if file_type == "pdf": 
-            doc_text = read_pdf(uploaded_file)
-        elif file_type == "docx": 
-            doc_text = read_word(uploaded_file)
-        elif file_type == "xlsx": 
-            doc_text = read_excel(uploaded_file)
-        elif file_type == "pptx": 
-            doc_text = read_pptx(uploaded_file)
-        elif file_type == "csv": 
-            doc_text = read_csv(uploaded_file) 
-        else: 
-            doc_text = ""
-            
+        if file_type == "pdf": doc_text = read_pdf(uploaded_file)
+        elif file_type == "docx": doc_text = read_word(uploaded_file)
+        elif file_type == "xlsx": doc_text = read_excel(uploaded_file)
+        elif file_type == "pptx": doc_text = read_pptx(uploaded_file)
+        elif file_type == "csv": doc_text = read_csv(uploaded_file)
+        else: doc_text = ""
         document_chunks = chunk_text(doc_text)
-        st.success(f"✅ {uploaded_file.name} ready! ({len(document_chunks)} segments)")
 
-    # Display past messages
+    st.success(f"✅ {uploaded_file.name} ready! ({len(document_chunks)} segments)")
+
     for msg in st.session_state.messages:
         with st.chat_message(msg["role"]):
             st.markdown(msg["content"])
@@ -173,12 +166,10 @@ if uploaded_file is not None:
     question = st.chat_input("Ask about your file...")
     
     if question:
-        # 1. Save to history & display user question
         st.session_state.messages.append({"role": "user", "content": question})
         with st.chat_message("user"):
             st.markdown(question)
             
-        # 2. Get AI answer
         with st.chat_message("assistant"):
             with st.spinner("Searching & thinking..."):
                 best_context = find_best_chunks(document_chunks, question)
@@ -190,7 +181,6 @@ if uploaded_file is not None:
                 answer = response.choices[0].message.content
                 st.markdown(answer)
                 
-        # 3. Save to history & session state for export
         st.session_state.messages.append({"role": "assistant", "content": answer})
         st.session_state.last_question = question
         st.session_state.last_answer = answer
@@ -203,7 +193,6 @@ if uploaded_file is not None:
         col1, col2, col3 = st.columns([1,1,1])
         with col2:
             if st.button("📥 Download Last Answer as Word Document", use_container_width=True):
-                # Create Word Document in memory
                 doc = DocxDocument()
                 doc.add_heading('AI Office Assistant - Export', 0)
                 doc.add_heading('Your Question:', level=1)
@@ -211,12 +200,10 @@ if uploaded_file is not None:
                 doc.add_heading('AI Answer:', level=1)
                 doc.add_paragraph(st.session_state.last_answer)
                 
-                # Save to memory buffer
                 buffer = io.BytesIO()
                 doc.save(buffer)
                 buffer.seek(0)
                 
-                # Trigger download
                 st.download_button(
                     label="Click here to save the .docx file",
                     data=buffer,
