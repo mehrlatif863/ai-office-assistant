@@ -87,8 +87,7 @@ def read_pptx(file):
                     for cell in row.cells: text += cell.text + " | "
                     text += "\n"
     return text
-    
-     def read_csv(file):
+    def read_csv(file):
     text = ""
     # Handle different text encodings
     try:
