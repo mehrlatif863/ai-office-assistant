@@ -88,14 +88,13 @@ def read_pptx(file):
                     text += "\n"
     return text
     def read_csv(file):
-    text = ""
+        text =""
     # Handle different text encodings
     try:
         decoded_file = io.StringIO(file.read().decode('utf-8'))
     except UnicodeDecodeError:
         decoded_file = io.StringIO(file.read().decode('latin-1'))
-        
-    reader = csv.reader(decoded_file)
+            reader = csv.reader(decoded_file)
     for row in reader:
         text += " | ".join(row) + "\n"
     return text
