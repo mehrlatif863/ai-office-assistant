@@ -128,7 +128,7 @@ with tab1:
                 st.download_button("Save File", buf, "Answer.docx")
 
 # ==========================================
-# TAB 2: AUTO DASHBOARD + AI INSIGHTS
+# TAB 2: AUTO DASHBOARD + STICKY INSIGHTS
 # ==========================================
 with tab2:
     st.write("Upload an **Excel** or **CSV** file to visualize data and generate AI insights.")
@@ -146,42 +146,51 @@ with tab2:
         with st.expander("View Raw Data"):
             st.dataframe(df.head(10))
 
+        # --- MEMORY FOR DASHBOARD ---
+        if "chart_saved" not in st.session_state:
+            st.session_state.chart_saved = False
+        if "insights_saved" not in st.session_state:
+            st.session_state.insights_saved = ""
+
         # --- CHART SECTION ---
         cols = df.columns.tolist()
         if len(cols) >= 2:
             c1, c2 = st.columns(2)
             with c1:
-                x_axis = st.selectbox("X-Axis (Categories)", cols)
+                x_axis = st.selectbox("X-Axis (Categories)", cols, key="x_ax")
             with c2:
-                y_axis = st.selectbox("Y-Axis (Numbers)", cols, index=1)
+                y_axis = st.selectbox("Y-Axis (Numbers)", cols, index=1, key="y_ax")
             
-            chart_type = st.radio("Select Chart Type", ["Bar Chart", "Line Chart", "Area Chart"], horizontal=True)
+            chart_type = st.radio("Select Chart Type", ["Bar Chart", "Line Chart", "Area Chart"], horizontal=True, key="c_type")
             
-            if st.button("📊 Generate Chart", use_container_width=True):
+            if st.button("📊 Generate Chart", use_container_width=True, key="gen_chart"):
+                # Save choices to memory
+                st.session_state.chart_saved = True
+                st.session_state.x_mem = x_axis
+                st.session_state.y_mem = y_axis
+                st.session_state.type_mem = chart_type
+                
+            # Draw chart from memory so it doesn't disappear
+            if st.session_state.chart_saved:
                 try:
-                    if chart_type == "Bar Chart":
-                        st.bar_chart(df, x=x_axis, y=y_axis)
-                    elif chart_type == "Line Chart":
-                        st.line_chart(df, x=x_axis, y=y_axis)
-                    elif chart_type == "Area Chart":
-                        st.area_chart(df, x=x_axis, y=y_axis)
+                    if st.session_state.type_mem == "Bar Chart":
+                        st.bar_chart(df, x=st.session_state.x_mem, y=st.session_state.y_mem)
+                    elif st.session_state.type_mem == "Line Chart":
+                        st.line_chart(df, x=st.session_state.x_mem, y=st.session_state.y_mem)
+                    elif st.session_state.type_mem == "Area Chart":
+                        st.area_chart(df, x=st.session_state.x_mem, y=st.session_state.y_mem)
                 except Exception as e:
                     st.error(f"Could not draw chart. Make sure Y-Axis has numbers. (Error: {e})")
         
-        # --- NEW: AI INSIGHTS SECTION ---
+        # --- AI INSIGHTS SECTION ---
         st.markdown("---")
         st.subheader("🧠 AI-Powered Data Insights")
-        st.write("Let the AI analyze the math, find trends, and explain what the numbers mean.")
         
-        if st.button("⚡ Generate AI Insights", use_container_width=True, type="primary"):
+        if st.button("⚡ Generate AI Insights", use_container_width=True, type="primary", key="gen_insights"):
             with st.spinner("AI is analyzing statistical data..."):
-                # 1. Get Mathematical Summary (Averages, Max, Min) - Safe for large files
                 math_summary = df.describe(include='all').to_string()
-                
-                # 2. Get first few rows for context
                 sample_data = df.head(15).to_string()
                 
-                # 3. Ask AI to act as a Data Analyst
                 prompt = f"""You are a Senior Data Analyst. Analyze this dataset and provide 3-5 key business insights, trends, or anomalies. 
                 
                 Mathematical Summary (Mean, Min, Max, etc):
@@ -197,9 +206,16 @@ with tab2:
                         model="llama-3.3-70b-versatile", 
                         messages=[{"role":"user","content": prompt}]
                     )
-                    st.success(res.choices[0].message.content)
+                    st.session_state.insights_saved = res.choices[0].message.content
                 except Exception as e:
-                    st.error(f"AI could not read this data format. Error: {e}")
+                    st.session_state.insights_saved = f"Error: {e}"
+
+        # Draw insights from memory so it doesn't disappear
+        if st.session_state.insights_saved:
+            if "Error:" in st.session_state.insights_saved:
+                st.error(st.session_state.insights_saved)
+            else:
+                st.success(st.session_state.insights_saved)
 
 # ==========================================
 # SIDEBAR
