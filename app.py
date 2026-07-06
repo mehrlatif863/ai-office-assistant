@@ -3,6 +3,7 @@ import re
 import io
 import csv
 import pandas as pd
+import plotly.express as px # <-- NEW: For fancy charts
 from groq import Groq
 from pypdf import PdfReader
 from docx import Document as DocxDocument
@@ -42,24 +43,22 @@ if "messages" not in st.session_state:
 if "last_answer" not in st.session_state:
     st.session_state.last_answer = ""
 
-st.title("🤖 AI Office Assistant (Data Analyst Edition)")
+st.title("🤖 AI Office Assistant (Enterprise Edition)")
 
 # ==========================================
-# 3. CREATE TABS
+# 3. CREATE TABS (Added Tab 3)
 # ==========================================
-tab1, tab2 = st.tabs(["💬 Chat with AI (Multiple Files)", "📊 Auto Dashboard & AI Insights"])
+tab1, tab2, tab3 = st.tabs(["💬 AI Chat", "📊 Auto Insights", "🏢 Executive Dashboard"])
 
 # ==========================================
-# TAB 1: AI CHATBOT (MULTI-FILE SUPPORT)
+# TAB 1: AI CHATBOT (HIDDEN TO SAVE SPACE, BUT STILL WORKS)
 # ==========================================
 with tab1:
-    uploaded_files = st.file_uploader("Upload Documents (You can select multiple!)", type=["pdf", "docx", "xlsx", "pptx", "csv"], accept_multiple_files=True, key="chat")
+    uploaded_files = st.file_uploader("Upload Documents", type=["pdf", "docx", "xlsx", "pptx", "csv"], accept_multiple_files=True, key="chat")
     
-    def read_pdf(file):
-        return "\n".join([page.extract_text() for page in PdfReader(file).pages])
+    def read_pdf(file): return "\n".join([p.extract_text() for p in PdfReader(file).pages])
     def read_word(file):
-        doc = DocxDocument(file)
-        text = "\n".join([p.text for p in doc.paragraphs])
+        doc = DocxDocument(file); text = "\n".join([p.text for p in doc.paragraphs])
         for t in doc.tables:
             for r in t.rows: text += "\n" + " | ".join([c.text for c in r.cells])
         return text
@@ -74,8 +73,7 @@ with tab1:
         except: f = io.StringIO(file.read().decode('latin-1'))
         return "\n".join([",".join(row) for row in csv.reader(f)])
     def read_excel_txt(file):
-        wb = openpyxl.load_workbook(file)
-        text = ""
+        wb = openpyxl.load_workbook(file); text = ""
         for sn in wb.sheetnames:
             text += f"--- {sn} ---\n"
             for row in wb[sn].iter_rows(values_only=True): text += " | ".join([str(c) if c else "" for c in row]) + "\n"
@@ -102,120 +100,141 @@ with tab1:
                 elif ft=="csv": all_text += read_csv_txt(file) + "\n\n"
                 elif ft=="xlsx": all_text += read_excel_txt(file) + "\n\n"
             chunks = chunk_text(all_text)
-        st.success(f"✅ {len(uploaded_files)} files combined and indexed!")
-
+        st.success(f"✅ {len(uploaded_files)} files indexed!")
         for msg in st.session_state.messages:
             with st.chat_message(msg["role"]): st.markdown(msg["content"])
-
-        q = st.chat_input("Ask a question across ALL uploaded files...")
+        q = st.chat_input("Ask across all files...")
         if q:
             st.session_state.messages.append({"role": "user", "content": q})
             with st.chat_message("user"): st.markdown(q)
             with st.chat_message("assistant"):
-                with st.spinner("Searching all documents..."):
+                with st.spinner("Thinking..."):
                     ctx = find_best_chunks(chunks, q)
                     res = client.chat.completions.create(model="llama-3.3-70b-versatile", messages=[{"role":"user","content":f"Answer ONLY from context:\n{ctx}\n\nQ:{q}"}])
                     ans = res.choices[0].message.content
                     st.markdown(ans)
             st.session_state.messages.append({"role": "assistant", "content": ans})
             st.session_state.last_answer = ans
-
         if st.session_state.last_answer:
             if st.button("📥 Download Answer as Word"):
-                doc = DocxDocument()
-                doc.add_paragraph(st.session_state.last_answer)
+                doc = DocxDocument(); doc.add_paragraph(st.session_state.last_answer)
                 buf = io.BytesIO(); doc.save(buf); buf.seek(0)
                 st.download_button("Save File", buf, "Answer.docx")
 
 # ==========================================
-# TAB 2: AUTO DASHBOARD + STICKY INSIGHTS
+# TAB 2: AUTO DASHBOARD (HIDDEN BUT WORKS)
 # ==========================================
 with tab2:
-    st.write("Upload an **Excel** or **CSV** file to visualize data and generate AI insights.")
     dash_file = st.file_uploader("Upload Data File", type=["xlsx", "csv"], key="dash")
-    
     if dash_file:
-        # Read data using Pandas
-        if dash_file.name.endswith(".csv"):
-            df = pd.read_csv(dash_file)
-        else:
-            df = pd.read_excel(dash_file)
-            
-        st.success("✅ Data loaded successfully!")
-        
-        with st.expander("View Raw Data"):
-            st.dataframe(df.head(10))
-
-        # --- MEMORY FOR DASHBOARD ---
-        if "chart_saved" not in st.session_state:
-            st.session_state.chart_saved = False
-        if "insights_saved" not in st.session_state:
-            st.session_state.insights_saved = ""
-
-        # --- CHART SECTION ---
+        df = pd.read_csv(dash_file) if dash_file.name.endswith(".csv") else pd.read_excel(dash_file)
+        st.success("✅ Data loaded!")
         cols = df.columns.tolist()
         if len(cols) >= 2:
             c1, c2 = st.columns(2)
-            with c1:
-                x_axis = st.selectbox("X-Axis (Categories)", cols, key="x_ax")
-            with c2:
-                y_axis = st.selectbox("Y-Axis (Numbers)", cols, index=1, key="y_ax")
-            
-            chart_type = st.radio("Select Chart Type", ["Bar Chart", "Line Chart", "Area Chart"], horizontal=True, key="c_type")
-            
-            if st.button("📊 Generate Chart", use_container_width=True, key="gen_chart"):
-                # Save choices to memory
-                st.session_state.chart_saved = True
-                st.session_state.x_mem = x_axis
-                st.session_state.y_mem = y_axis
-                st.session_state.type_mem = chart_type
-                
-            # Draw chart from memory so it doesn't disappear
-            if st.session_state.chart_saved:
-                try:
-                    if st.session_state.type_mem == "Bar Chart":
-                        st.bar_chart(df, x=st.session_state.x_mem, y=st.session_state.y_mem)
-                    elif st.session_state.type_mem == "Line Chart":
-                        st.line_chart(df, x=st.session_state.x_mem, y=st.session_state.y_mem)
-                    elif st.session_state.type_mem == "Area Chart":
-                        st.area_chart(df, x=st.session_state.x_mem, y=st.session_state.y_mem)
-                except Exception as e:
-                    st.error(f"Could not draw chart. Make sure Y-Axis has numbers. (Error: {e})")
-        
-        # --- AI INSIGHTS SECTION ---
-        st.markdown("---")
-        st.subheader("🧠 AI-Powered Data Insights")
-        
-        if st.button("⚡ Generate AI Insights", use_container_width=True, type="primary", key="gen_insights"):
-            with st.spinner("AI is analyzing statistical data..."):
-                math_summary = df.describe(include='all').to_string()
-                sample_data = df.head(15).to_string()
-                
-                prompt = f"""You are a Senior Data Analyst. Analyze this dataset and provide 3-5 key business insights, trends, or anomalies. 
-                
-                Mathematical Summary (Mean, Min, Max, etc):
-                {math_summary}
-                
-                Sample of the Data (First 15 rows):
-                {sample_data}
-                
-                Please provide clear, actionable insights in bullet points. Do not just repeat the numbers, explain WHAT THEY MEAN for the business."""
-                
-                try:
-                    res = client.chat.completions.create(
-                        model="llama-3.3-70b-versatile", 
-                        messages=[{"role":"user","content": prompt}]
-                    )
-                    st.session_state.insights_saved = res.choices[0].message.content
-                except Exception as e:
-                    st.session_state.insights_saved = f"Error: {e}"
+            with c1: x_axis = st.selectbox("X-Axis", cols, key="x_ax")
+            with c2: y_axis = st.selectbox("Y-Axis", cols, index=1, key="y_ax")
+            if st.button("📊 Generate Chart", use_container_width=True):
+                try: st.bar_chart(df, x=x_axis, y=y_axis)
+                except: st.error("Ensure Y-Axis has numbers.")
 
-        # Draw insights from memory so it doesn't disappear
-        if st.session_state.insights_saved:
-            if "Error:" in st.session_state.insights_saved:
-                st.error(st.session_state.insights_saved)
+# ==========================================
+# TAB 3: EXECUTIVE DASHBOARD (THE NEW MAGIC)
+# ==========================================
+with tab3:
+    st.markdown("### 📈 Store Performance Overview")
+    exec_file = st.file_uploader("Upload Store Data (Excel/CSV)", type=["xlsx", "csv"], key="exec")
+    
+    if exec_file:
+        df = pd.read_csv(exec_file) if exec_file.name.endswith(".csv") else pd.read_excel(exec_file)
+        
+        # Clean column names (remove spaces to make it easier)
+        df.columns = df.columns.str.replace(' ', '_')
+        
+        # Try to convert date column
+        date_col = None
+        for col in df.columns:
+            if 'date' in col.lower() or 'time' in col.lower():
+                df[col] = pd.to_datetime(df[col], errors='coerce')
+                date_col = col
+                break
+                
+        # --- PART 1: KPI METRICS ---
+        st.markdown("---")
+        
+        # Find Sales/Cost columns dynamically
+        sales_col = next((c for c in df.columns if 'sales' in c.lower() or 'revenue' in c.lower()), None)
+        cost_col = next((c for c in df.columns if 'cost' in c.lower() or 'purchase' in c.lower() or 'expense' in c.lower()), None)
+        
+        kpi1, kpi2, kpi3, kpi4 = st.columns(4)
+        
+        if sales_col:
+            total_sales = df[sales_col].sum()
+            kpi1.metric(label="💰 Total Sales", value=f"${total_sales:,.0f}")
+            
+            if cost_col:
+                total_cost = df[cost_col].sum()
+                profit = total_sales - total_cost
+                kpi2.metric(label="📉 Total Cost", value=f"${total_cost:,.0f}")
+                kpi3.metric(label="✨ Net Profit", value=f"${profit:,.0f}")
+        
+        # Find Top Customer and City
+        cust_col = next((c for c in df.columns if 'customer' in c.lower() or 'client' in c.lower()), None)
+        city_col = next((c for c in df.columns if 'city' in c.lower() or 'location' in c.lower() or 'state' in c.lower()), None)
+        
+        if cust_col and sales_col:
+            top_cust = df.groupby(cust_col)[sales_col].sum().idxmax()
+            kpi4.metric(label="🏆 Top Customer", value=top_cust)
+        elif city_col and sales_col:
+            top_city = df.groupby(city_col)[sales_col].sum().idxmax()
+            kpi4.metric(label="📍 Top Location", value=top_city)
+
+        # --- PART 2: CHARTS GRID ---
+        st.markdown("---")
+        chart1, chart2 = st.columns(2)
+        
+        # Chart 1: Sales Trend (Line)
+        with chart1:
+            st.markdown("**Sales Trend Over Time**")
+            if date_col and sales_col:
+                trend_data = df.groupby(date_col)[sales_col].sum().reset_index()
+                fig = px.line(trend_data, x=date_col, y=sales_col, template="plotly_white")
+                st.plotly_chart(fig, use_container_width=True)
             else:
-                st.success(st.session_state.insights_saved)
+                st.warning("Need a 'Date' and 'Sales' column for trend.")
+
+        # Chart 2: Top Customers (Bar)
+        with chart2:
+            st.markdown("**Top Customers**")
+            if cust_col and sales_col:
+                cust_data = df.groupby(cust_col)[sales_col].sum().sort_values(ascending=False).head(5).reset_index()
+                fig = px.bar(cust_data, x=cust_col, y=sales_col, template="plotly_white")
+                st.plotly_chart(fig, use_container_width=True)
+            else:
+                st.warning("Need a 'Customer' and 'Sales' column.")
+
+        chart3, chart4 = st.columns(2)
+        
+        # Chart 3: Sales by Location (Donut)
+        with chart3:
+            st.markdown("**Sales by Location**")
+            if city_col and sales_col:
+                city_data = df.groupby(city_col)[sales_col].sum().reset_index()
+                fig = px.pie(city_data, values=sales_col, names=city_col, hole=0.4, template="plotly_white")
+                st.plotly_chart(fig, use_container_width=True)
+            else:
+                st.warning("Need a 'City/Location' column.")
+
+        # Chart 4: Sales by Category (Donut)
+        with chart4:
+            st.markdown("**Sales by Category**")
+            cat_col = next((c for c in df.columns if 'category' in c.lower() or 'product' in c.lower() or 'item' in c.lower()), None)
+            if cat_col and sales_col:
+                cat_data = df.groupby(cat_col)[sales_col].sum().reset_index()
+                fig = px.pie(cat_data, values=sales_col, names=cat_col, hole=0.4, template="plotly_white")
+                st.plotly_chart(fig, use_container_width=True)
+            else:
+                st.warning("Need a 'Category/Product' column.")
 
 # ==========================================
 # SIDEBAR
